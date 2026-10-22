@@ -1,11 +1,13 @@
 
 const express = require("express");
 const { conectarDB } = require("./config/db");
+const ticketsRoutes = require("./routes/tickets.routes");
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+app.use("/api/tickets", ticketsRoutes);
 
 // Ruta de bienvenida
 app.get("/", (req, res) => {
