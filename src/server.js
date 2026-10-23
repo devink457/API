@@ -41,6 +41,34 @@ app.get("/api/health/db", async (req, res) => {
     }
 });
 
+
+ // Manejar rutas que no existen
+app.use((req, res) => {
+    res.status(404).json({
+        mensaje: "La ruta solicitada no existe"
+    });
+});
+
+// Manejo de errores de Express, incluido JSON mal formado
+app.use((err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+        return res.status(400).json({
+            mensaje: "El cuerpo de la petición contiene JSON inválido"
+        });
+    }
+
+    console.error("Error inesperado:", err.message);
+
+    return res.status(500).json({
+        mensaje: "Error interno del servidor"
+    });
+});
+
+
 app.listen(PORT, () => {
     console.log(`Servidor iniciado en http://localhost:${PORT}`);
 });

@@ -13,6 +13,13 @@ const ESTADOS_PERMITIDOS = [
     "cerrado"
 ];
 
+const PRIORIDADES_PERMITIDAS = [
+    "baja",
+    "media",
+    "alta",
+    "critica"
+];
+
 // GET /api/tickets
 // Obtener todos los tickets
 router.get("/", async (req, res) => {
@@ -134,15 +141,13 @@ router.post("/", async (req, res) => {
     }
 
     const estadoFinal = estado ?? "abierto";
-    const prioridadFinal = prioridad ?? "Media";
+    const prioridadFinal = (prioridad ?? "media").trim().toLowerCase();
 
     if (
-        typeof estadoFinal !== "string" ||
-        !ESTADOS_PERMITIDOS.includes(estadoFinal.trim())
-    ) {
+        !PRIORIDADES_PERMITIDAS.includes(prioridadFinal)) {
         return res.status(400).json({
-            mensaje: "Estado inválido",
-            estadosPermitidos: ESTADOS_PERMITIDOS
+            mensaje: "Prioridad inválida",
+            prioridadesPermitidas: PRIORIDADES_PERMITIDAS
         });
     }
 
@@ -434,5 +439,56 @@ router.put("/:id", async (req, res) => {
         });
     }
 });
+
+
+ // DELETE /api/tickets/:id
+ // Eliminar un ticket existente
+router.delete("/:id", async (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({
+            mensaje: "El ID debe ser un entero positivo"
+        });
+    }
+
+    try {
+        const pool = await conectarDB();
+
+        const resultado = await pool.request()
+            .input("id_ticket", sql.Int, id)
+            .query(`
+                DELETE FROM tickets
+                OUTPUT DELETED.id_ticket
+                WHERE id_ticket = @id_ticket
+            `);
+
+        if (resultado.recordset.length === 0) {
+            return res.status(404).json({
+                mensaje: "No se encontró un ticket con ese ID"
+            });
+        }
+
+        return res.status(200).json({
+            mensaje: "Ticket eliminado correctamente",
+            id_ticket: resultado.recordset[0].id_ticket
+        });
+    } catch (error) {
+        console.error("Error al eliminar ticket:", error.message);
+        console.error("Código SQL:", error.number);
+
+        if (error.number === 547) {
+            return res.status(409).json({
+                mensaje:
+                    "No se puede eliminar el ticket porque tiene registros relacionados"
+            });
+        }
+
+        return res.status(500).json({
+            mensaje: "Error interno al eliminar el ticket"
+        });
+    }
+});
+
 
 module.exports = router;

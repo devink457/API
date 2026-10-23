@@ -108,7 +108,7 @@ CREATE TABLE historial_estados (
         ON DELETE SET NULL
 );
 
--- DATOS DE DEMOSTRACIÓN (USUARIOS)
+-- DATOS DE DEMOSTRACIï¿½N (USUARIOS)
 IF NOT EXISTS (
     SELECT 1 FROM usuarios
     WHERE correo = N'ana@demo.com'
@@ -146,7 +146,7 @@ BEGIN
 END;
 GO
 
--- DATOS DE DEMOSTRACIÓN (CATEGORIAS)
+-- DATOS DE DEMOSTRACIï¿½N (CATEGORIAS)
 IF NOT EXISTS (
     SELECT 1 FROM categorias
     WHERE nombre = N'Hardware'
@@ -183,7 +183,7 @@ IF NOT EXISTS (
     VALUES (N'Otros', N'Solicitudes generales de soporte');
 GO
 
--- DATOS DE DEMOSTRACIÓN (TICKETS)
+-- DATOS DE DEMOSTRACIï¿½N (TICKETS)
 IF NOT EXISTS (
     SELECT 1 FROM tickets
     WHERE titulo = N'Computadora no enciende'
@@ -250,7 +250,7 @@ BEGIN
 END;
 GO
 
--- DATOS DE DEMOSTRACIÓN (RESPUESTAS)
+-- DATOS DE DEMOSTRACIï¿½N (RESPUESTAS)
 IF NOT EXISTS (
     SELECT 1 FROM respuestas
     WHERE id_ticket = (
@@ -324,7 +324,7 @@ BEGIN
 END;
 GO
 
--- DATOS DE DEMOSTRACIÓN (HISTORIAL)
+-- DATOS DE DEMOSTRACIï¿½N (HISTORIAL)
 IF NOT EXISTS (
     SELECT 1 FROM historial_estados h
     INNER JOIN tickets t ON t.id_ticket = h.id_ticket
@@ -382,7 +382,7 @@ SELECT
     ca.nombre AS categoria,
     t.fecha_creacion
 FROM tickets AS t
-INNER JOIN .usuarios AS c
+INNER JOIN usuarios AS c
     ON t.id_cliente = c.id_usuario
 LEFT JOIN usuarios AS te
     ON t.id_tecnico = te.id_usuario
