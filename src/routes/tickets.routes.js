@@ -89,7 +89,17 @@ router.get("/:id", async (req, res) => {
 
 // POST /api/tickets
 // Crear un ticket
-router.post("/", async (req, res) => {
+router.post("/", async (req, res) => { 
+    if (
+        !req.body ||
+        typeof req.body !== "object" ||
+        Array.isArray(req.body)
+    ) {
+        return res.status(400).json({
+            mensaje: "Debes enviar un objeto JSON"
+        });
+    }
+
     const {
         titulo,
         descripcion,
@@ -103,15 +113,17 @@ router.post("/", async (req, res) => {
     if (
         typeof titulo !== "string" ||
         !titulo.trim() ||
-        titulo.trim().length > 300 ||
+        titulo.trim().length > 150 ||
         typeof descripcion !== "string" ||
         !descripcion.trim() ||
         id_cliente === undefined ||
-        id_categoria === undefined
+        id_cliente === null ||
+        id_categoria === undefined ||
+        id_categoria === null
     ) {
         return res.status(400).json({
             mensaje:
-                "titulo, descripcion, id_cliente e id_categoria son obligatorios. El título admite hasta 300 caracteres."
+                "titulo, descripcion, id_cliente e id_categoria son obligatorios. El título admite hasta 150 caracteres."
         });
     }
 
@@ -140,24 +152,43 @@ router.post("/", async (req, res) => {
         });
     }
 
-    const estadoFinal = estado ?? "abierto";
-    const prioridadFinal = (prioridad ?? "media").trim().toLowerCase();
-
-    if (
-        !PRIORIDADES_PERMITIDAS.includes(prioridadFinal)) {
+     if (
+        estado !== undefined &&
+        typeof estado !== "string"
+    ) {
         return res.status(400).json({
-            mensaje: "Prioridad inválida",
-            prioridadesPermitidas: PRIORIDADES_PERMITIDAS
+            mensaje: "El estado debe ser texto"
+        });
+    }
+
+    const estadoFinal = (estado ?? "abierto")
+        .trim()
+        .toLowerCase();
+
+    if (!ESTADOS_PERMITIDOS.includes(estadoFinal)) {
+        return res.status(400).json({
+            mensaje: "Estado inválido",
+            estadosPermitidos: ESTADOS_PERMITIDOS
         });
     }
 
     if (
-        typeof prioridadFinal !== "string" ||
-        !prioridadFinal.trim() ||
-        prioridadFinal.trim().length > 20
+        prioridad !== undefined &&
+        typeof prioridad !== "string"
     ) {
         return res.status(400).json({
-            mensaje: "La prioridad debe tener entre 1 y 20 caracteres"
+            mensaje: "La prioridad debe ser texto"
+        });
+    }
+
+    const prioridadFinal = (prioridad ?? "media")
+        .trim()
+        .toLowerCase();
+
+    if (!PRIORIDADES_PERMITIDAS.includes(prioridadFinal)) {
+        return res.status(400).json({
+            mensaje: "Prioridad inválida",
+            prioridadesPermitidas: PRIORIDADES_PERMITIDAS
         });
     }
 
@@ -165,7 +196,7 @@ router.post("/", async (req, res) => {
         const pool = await conectarDB();
 
         const resultado = await pool.request()
-            .input("titulo", sql.NVarChar(300), titulo.trim())
+            .input("titulo", sql.NVarChar(150), titulo.trim())
             .input(
                 "descripcion",
                 sql.NVarChar(sql.MAX),
@@ -174,10 +205,10 @@ router.post("/", async (req, res) => {
             .input("id_cliente", sql.Int, clienteId)
             .input("id_tecnico", sql.Int, tecnicoId)
             .input("id_categoria", sql.Int, categoriaId)
-            .input("estado", sql.NVarChar(40), estadoFinal.trim())
+            .input("estado", sql.NVarChar(20), estadoFinal)
             .input(
                 "prioridad",
-                sql.NVarChar(20),
+                sql.NVarChar(10),
                 prioridadFinal.trim()
             )
             .query(`
@@ -286,11 +317,11 @@ router.put("/:id", async (req, res) => {
         (
             typeof titulo !== "string" ||
             !titulo.trim() ||
-            titulo.trim().length > 300
+            titulo.trim().length > 150
         )
     ) {
         return res.status(400).json({
-            mensaje: "El título debe tener entre 1 y 300 caracteres"
+            mensaje: "El título debe tener entre 1 y 150 caracteres"
         });
     }
 
@@ -310,7 +341,9 @@ router.put("/:id", async (req, res) => {
         estado !== undefined &&
         (
             typeof estado !== "string" ||
-            !ESTADOS_PERMITIDOS.includes(estado.trim())
+            !ESTADOS_PERMITIDOS.includes(
+                estado.trim().toLowerCase()
+            )
         )
     ) {
         return res.status(400).json({
@@ -323,12 +356,14 @@ router.put("/:id", async (req, res) => {
         prioridad !== undefined &&
         (
             typeof prioridad !== "string" ||
-            !prioridad.trim() ||
-            prioridad.trim().length > 20
+            !PRIORIDADES_PERMITIDAS.includes(
+                prioridad.trim().toLowerCase()
+            )
         )
     ) {
         return res.status(400).json({
-            mensaje: "La prioridad debe tener entre 1 y 20 caracteres"
+            mensaje: "Prioridad inválida",
+            prioridadesPermitidas: PRIORIDADES_PERMITIDAS
         });
     }
 
@@ -374,10 +409,10 @@ router.put("/:id", async (req, res) => {
         const asignaciones = [];
 
         const tipos = {
-            titulo: sql.NVarChar(300),
+            titulo: sql.NVarChar(150),
             descripcion: sql.NVarChar(sql.MAX),
-            estado: sql.NVarChar(40),
-            prioridad: sql.NVarChar(20),
+            estado: sql.NVarChar(20),
+            prioridad: sql.NVarChar(10),
             id_cliente: sql.Int,
             id_tecnico: sql.Int,
             id_categoria: sql.Int
@@ -388,6 +423,10 @@ router.put("/:id", async (req, res) => {
 
             if (typeof valor === "string") {
                 valor = valor.trim();
+
+                if (campo === "estado" || campo === "prioridad") {
+                    valor = valor.toLowerCase();
+                }
             }
 
             request.input(campo, tipos[campo], valor);
@@ -400,11 +439,8 @@ router.put("/:id", async (req, res) => {
             UPDATE tickets
             SET ${asignaciones.join(", ")},
                 fecha_actualizacion = GETDATE()
-            WHERE id_ticket = @id_ticket;
-
-            SELECT *
-            FROM tickets
-            WHERE id_ticket = @id_ticket;
+            OUTPUT INSERTED.*
+            WHERE id_ticket = @id_ticket
         `);
 
         const ticketActualizado = resultado.recordset?.[0];
