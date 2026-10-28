@@ -1,20 +1,76 @@
-const ROOT = '/api';
-async function request(path, options={}) {
-  let response;
-  try { response = await fetch(`${ROOT}${path}`, { ...options, headers: {'Content-Type':'application/json', ...options.headers} }); }
-  catch { throw new Error('No se pudo contactar al backend. Verifica que Express esté activo en el puerto 3000.'); }
-  const raw = await response.text();
-  let data = {};
-  if(raw) { try { data=JSON.parse(raw); } catch { throw new Error(`Respuesta inválida del servidor (HTTP ${response.status}).`); } }
-  if(!response.ok) throw new Error(data.mensaje || data.error || `Error HTTP ${response.status}`);
-  return data;
+
+const BASE_URL = "/api";
+
+async function peticion(ruta, opciones = {}) {
+  const sesion = JSON.parse(
+    sessionStorage.getItem("soporte_ti_sesion") || "null"
+  );
+
+  const token = sesion?.token;
+
+  const respuesta = await fetch(`${BASE_URL}${ruta}`, {
+    ...opciones,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...opciones.headers,
+    },
+  });
+
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (respuesta.status === 401 && token) {
+    sessionStorage.removeItem("soporte_ti_sesion");
+    window.location.reload();
+    throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
+  }
+
+  if (!respuesta.ok) {
+    throw new Error(datos.mensaje || "Error al comunicarse con el servidor");
+  }
+
+  return datos;
 }
+
 export const api = {
-  tickets: () => request('/tickets').then(x=>x.tickets || []),
-  crear: data => request('/tickets',{method:'POST',body:JSON.stringify(data)}),
-  editar: (id,data) => request(`/tickets/${id}`,{method:'PUT',body:JSON.stringify(data)}),
-  eliminar: id => request(`/tickets/${id}`,{method:'DELETE'}),
-  usuarios: () => request('/usuarios').then(x=>x.usuarios || []),
-  crearUsuario: data => request('/usuarios',{method:'POST',body:JSON.stringify(data)}),
-  categorias: () => request('/categorias').then(x=>x.categorias || []),
+  // TICKETS
+  tickets: async () => {
+    const datos = await peticion("/tickets");
+    return datos.tickets || [];
+  },
+
+  crear: (ticket) =>
+    peticion("/tickets", {
+      method: "POST",
+      body: JSON.stringify(ticket),
+    }),
+
+  editar: (id, ticket) =>
+    peticion(`/tickets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(ticket),
+    }),
+
+  eliminar: (id) =>
+    peticion(`/tickets/${id}`, {
+      method: "DELETE",
+    }),
+
+  // USUARIOS
+  usuarios: async () => {
+    const datos = await peticion("/usuarios");
+    return datos.usuarios || [];
+  },
+
+  crearUsuario: (usuario) =>
+    peticion("/usuarios", {
+      method: "POST",
+      body: JSON.stringify(usuario),
+    }),
+
+  // CATEGORÍAS
+  categorias: async () => {
+    const datos = await peticion("/categorias");
+    return datos.categorias || [];
+  },
 };

@@ -1,18 +1,34 @@
-
+require("dotenv").config();
 const express = require("express");
 const { conectarDB } = require("./config/db");
 const ticketsRoutes = require("./routes/tickets.routes");
 const usuariosRoutes = require("./routes/usuarios.routes");
 const categoriasRoutes = require("./routes/categorias.routes");
+const authRoutes = require("./routes/auth.routes");
+const { verificarToken, permitirRoles } = require("./middlewares/auth.middleware");
+
 
 const app = express();
 const PORT = 3000;
 
+// Permitir recibir datos JSON
 app.use(express.json());
-app.use("/api/tickets", ticketsRoutes);
-app.use("/api/usuarios", usuariosRoutes);
-app.use("/api/categorias", categoriasRoutes);
 
+// Login público
+
+app.use("/api/auth", authRoutes);
+
+// Rutas protegidas con JWT
+app.use("/api/tickets", verificarToken, ticketsRoutes);
+
+app.use(
+  "/api/usuarios",
+  verificarToken,
+  permitirRoles("administrador"),
+  usuariosRoutes
+);
+
+app.use("/api/categorias", verificarToken, categoriasRoutes);
 // Ruta de bienvenida
 app.get("/", (req, res) => {
     res.status(200).json({

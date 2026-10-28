@@ -1,530 +1,384 @@
 
 const express = require("express");
 const { sql, conectarDB } = require("../config/db");
+const { permitirRoles } = require("../middlewares/auth.middleware");
 
 const router = express.Router();
 
-// Valores permitidos por la base de datos
-const ESTADOS_PERMITIDOS = [
-    "abierto",
-    "pendiente",
-    "en_proceso",
-    "resuelto",
-    "cerrado"
+const ESTADOS = [
+  "abierto",
+  "pendiente",
+  "en_proceso",
+  "resuelto",
+  "cerrado",
 ];
 
-const PRIORIDADES_PERMITIDAS = [
-    "baja",
-    "media",
-    "alta",
-    "critica"
+const PRIORIDADES = [
+  "baja",
+  "media",
+  "alta",
+  "critica",
 ];
 
-// GET /api/tickets
-// Obtener todos los tickets
+const CAMPOS_PERMITIDOS = [
+  "titulo",
+  "descripcion",
+  "estado",
+  "prioridad",
+  "id_cliente",
+  "id_tecnico",
+  "id_categoria",
+];
+
+function validarId(valor) {
+  const id = Number(valor);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function validarTicket(datos, parcial = false) {
+  if (!datos || typeof datos !== "object" || Array.isArray(datos)) {
+    return "Los datos del ticket deben ser un objeto JSON.";
+  }
+
+  const campos = Object.keys(datos);
+
+  if (campos.some((campo) => !CAMPOS_PERMITIDOS.includes(campo))) {
+    return "La solicitud contiene campos no permitidos.";
+  }
+
+  if (parcial && campos.length === 0) {
+    return "Debes proporcionar al menos un campo para actualizar.";
+  }
+
+  if (!parcial) {
+    const requeridos = [
+      "titulo",
+      "descripcion",
+      "id_cliente",
+      "id_categoria",
+    ];
+
+    if (requeridos.some((campo) => datos[campo] === undefined)) {
+      return "Faltan campos obligatorios del ticket.";
+    }
+  }
+
+  for (const campo of ["titulo", "descripcion"]) {
+    if (datos[campo] !== undefined) {
+      if (
+        typeof datos[campo] !== "string" ||
+        !datos[campo].trim()
+      ) {
+        return `El campo ${campo} debe contener texto válido.`;
+      }
+    }
+  }
+
+  if (
+    datos.estado !== undefined &&
+    !ESTADOS.includes(datos.estado)
+  ) {
+    return "El estado indicado no es válido.";
+  }
+
+  if (
+    datos.prioridad !== undefined &&
+    !PRIORIDADES.includes(datos.prioridad)
+  ) {
+    return "La prioridad indicada no es válida.";
+  }
+
+  for (const campo of ["id_cliente", "id_categoria"]) {
+    if (
+      datos[campo] !== undefined &&
+      !validarId(datos[campo])
+    ) {
+      return `El campo ${campo} debe contener un ID válido.`;
+    }
+  }
+
+  if (
+    datos.id_tecnico !== undefined &&
+    datos.id_tecnico !== null &&
+    datos.id_tecnico !== "" &&
+    !validarId(datos.id_tecnico)
+  ) {
+    return "El ID del técnico no es válido.";
+  }
+
+  return null;
+}
+
+function agregarParametros(request, datos) {
+  const tipos = {
+    titulo: sql.NVarChar(150),
+    descripcion: sql.NVarChar(sql.MAX),
+    estado: sql.VarChar(30),
+    prioridad: sql.VarChar(20),
+    id_cliente: sql.Int,
+    id_tecnico: sql.Int,
+    id_categoria: sql.Int,
+  };
+
+  for (const [campo, valor] of Object.entries(datos)) {
+    let valorFinal = valor;
+
+    if (["titulo", "descripcion"].includes(campo)) {
+      valorFinal = valor.trim();
+    }
+
+    if (["id_cliente", "id_categoria", "id_tecnico"].includes(campo)) {
+      valorFinal =
+        valor === null || valor === ""
+          ? null
+          : Number(valor);
+    }
+
+    request.input(campo, tipos[campo], valorFinal);
+  }
+
+  return request;
+}
+
+// CONSULTAR TODOS LOS TICKETS
+// Acceso: cualquier usuario autenticado
 router.get("/", async (req, res) => {
-    try {
-        const pool = await conectarDB();
+  try {
+    const pool = await conectarDB();
 
-        const resultado = await pool.request().query(`
-            SELECT *
-            FROM tickets
-            ORDER BY id_ticket DESC
-        `);
+    const resultado = await pool.request().query(`
+      SELECT *
+      FROM tickets
+      ORDER BY id_ticket DESC
+    `);
 
-        return res.status(200).json({
-            mensaje: "Tickets obtenidos correctamente",
-            total: resultado.recordset.length,
-            tickets: resultado.recordset
-        });
-    } catch (error) {
-        console.error("Error al obtener tickets:", error.message);
+    return res.status(200).json({
+      mensaje: "Tickets obtenidos correctamente",
+      total: resultado.recordset.length,
+      tickets: resultado.recordset,
+    });
+  } catch (error) {
+    console.error("Error al consultar tickets:", error.message);
 
-        return res.status(500).json({
-            mensaje: "Error interno al consultar los tickets"
-        });
-    }
+    return res.status(500).json({
+      mensaje: "Error al consultar los tickets",
+    });
+  }
 });
 
-// GET /api/tickets/:id
-// Obtener un ticket por ID
+// CONSULTAR UN TICKET POR ID
+// Acceso: cualquier usuario autenticado
 router.get("/:id", async (req, res) => {
-    const id = Number(req.params.id);
+  const id = validarId(req.params.id);
 
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({
-            mensaje: "El ID del ticket debe ser un entero positivo"
-        });
+  if (!id) {
+    return res.status(400).json({
+      mensaje: "ID de ticket inválido",
+    });
+  }
+
+  try {
+    const pool = await conectarDB();
+
+    const resultado = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .query(`
+        SELECT *
+        FROM tickets
+        WHERE id_ticket = @id
+      `);
+
+    if (resultado.recordset.length === 0) {
+      return res.status(404).json({
+        mensaje: "Ticket no encontrado",
+      });
+    }
+
+    return res.status(200).json({
+      mensaje: "Ticket encontrado",
+      ticket: resultado.recordset[0],
+    });
+  } catch (error) {
+    console.error("Error al consultar ticket:", error.message);
+
+    return res.status(500).json({
+      mensaje: "Error al consultar el ticket",
+    });
+  }
+});
+
+// CREAR TICKET
+// Acceso: administrador y técnico
+router.post(
+  "/",
+  permitirRoles("administrador", "tecnico"),
+  async (req, res) => {
+    const datos = req.body;
+    const errorValidacion = validarTicket(datos);
+
+    if (errorValidacion) {
+      return res.status(400).json({
+        mensaje: errorValidacion,
+      });
     }
 
     try {
-        const pool = await conectarDB();
+      const pool = await conectarDB();
 
-        const resultado = await pool.request()
-            .input("id_ticket", sql.Int, id)
-            .query(`
-                SELECT *
-                FROM tickets
-                WHERE id_ticket = @id_ticket
-            `);
+      const ticket = {
+        titulo: datos.titulo,
+        descripcion: datos.descripcion,
+        estado: datos.estado ?? "abierto",
+        prioridad: datos.prioridad ?? "media",
+        id_cliente: datos.id_cliente,
+        id_tecnico: datos.id_tecnico ?? null,
+        id_categoria: datos.id_categoria,
+      };
 
-        if (resultado.recordset.length === 0) {
-            return res.status(404).json({
-                mensaje: "No se encontró un ticket con ese ID"
-            });
-        }
+      const request = agregarParametros(pool.request(), ticket);
 
-        return res.status(200).json({
-            mensaje: "Ticket obtenido correctamente",
-            ticket: resultado.recordset[0]
-        });
-    } catch (error) {
-        console.error("Error al obtener ticket:", error.message);
-
-        return res.status(500).json({
-            mensaje: "Error interno al consultar el ticket"
-        });
-    }
-});
-
-// POST /api/tickets
-// Crear un ticket
-router.post("/", async (req, res) => { 
-    if (
-        !req.body ||
-        typeof req.body !== "object" ||
-        Array.isArray(req.body)
-    ) {
-        return res.status(400).json({
-            mensaje: "Debes enviar un objeto JSON"
-        });
-    }
-
-    const {
-        titulo,
-        descripcion,
-        id_cliente,
-        id_tecnico,
-        id_categoria,
-        estado,
-        prioridad
-    } = req.body;
-
-    if (
-        typeof titulo !== "string" ||
-        !titulo.trim() ||
-        titulo.trim().length > 150 ||
-        typeof descripcion !== "string" ||
-        !descripcion.trim() ||
-        id_cliente === undefined ||
-        id_cliente === null ||
-        id_categoria === undefined ||
-        id_categoria === null
-    ) {
-        return res.status(400).json({
-            mensaje:
-                "titulo, descripcion, id_cliente e id_categoria son obligatorios. El título admite hasta 150 caracteres."
-        });
-    }
-
-    const clienteId = Number(id_cliente);
-    const categoriaId = Number(id_categoria);
-
-    const tecnicoId =
-        id_tecnico === undefined ||
-        id_tecnico === null ||
-        id_tecnico === ""
-            ? null
-            : Number(id_tecnico);
-
-    if (
-        !Number.isInteger(clienteId) ||
-        clienteId <= 0 ||
-        !Number.isInteger(categoriaId) ||
-        categoriaId <= 0 ||
-        (
-            tecnicoId !== null &&
-            (!Number.isInteger(tecnicoId) || tecnicoId <= 0)
+      const resultado = await request.query(`
+        INSERT INTO tickets (
+          titulo,
+          descripcion,
+          estado,
+          prioridad,
+          id_cliente,
+          id_tecnico,
+          id_categoria
         )
-    ) {
-        return res.status(400).json({
-            mensaje: "Los IDs deben ser enteros positivos"
-        });
-    }
+        OUTPUT INSERTED.*
+        VALUES (
+          @titulo,
+          @descripcion,
+          @estado,
+          @prioridad,
+          @id_cliente,
+          @id_tecnico,
+          @id_categoria
+        )
+      `);
 
-     if (
-        estado !== undefined &&
-        typeof estado !== "string"
-    ) {
-        return res.status(400).json({
-            mensaje: "El estado debe ser texto"
-        });
-    }
-
-    const estadoFinal = (estado ?? "abierto")
-        .trim()
-        .toLowerCase();
-
-    if (!ESTADOS_PERMITIDOS.includes(estadoFinal)) {
-        return res.status(400).json({
-            mensaje: "Estado inválido",
-            estadosPermitidos: ESTADOS_PERMITIDOS
-        });
-    }
-
-    if (
-        prioridad !== undefined &&
-        typeof prioridad !== "string"
-    ) {
-        return res.status(400).json({
-            mensaje: "La prioridad debe ser texto"
-        });
-    }
-
-    const prioridadFinal = (prioridad ?? "media")
-        .trim()
-        .toLowerCase();
-
-    if (!PRIORIDADES_PERMITIDAS.includes(prioridadFinal)) {
-        return res.status(400).json({
-            mensaje: "Prioridad inválida",
-            prioridadesPermitidas: PRIORIDADES_PERMITIDAS
-        });
-    }
-
-    try {
-        const pool = await conectarDB();
-
-        const resultado = await pool.request()
-            .input("titulo", sql.NVarChar(150), titulo.trim())
-            .input(
-                "descripcion",
-                sql.NVarChar(sql.MAX),
-                descripcion.trim()
-            )
-            .input("id_cliente", sql.Int, clienteId)
-            .input("id_tecnico", sql.Int, tecnicoId)
-            .input("id_categoria", sql.Int, categoriaId)
-            .input("estado", sql.NVarChar(20), estadoFinal)
-            .input(
-                "prioridad",
-                sql.NVarChar(10),
-                prioridadFinal.trim()
-            )
-            .query(`
-                INSERT INTO tickets (
-                    titulo,
-                    descripcion,
-                    id_cliente,
-                    id_tecnico,
-                    id_categoria,
-                    estado,
-                    prioridad
-                )
-                OUTPUT INSERTED.*
-                VALUES (
-                    @titulo,
-                    @descripcion,
-                    @id_cliente,
-                    @id_tecnico,
-                    @id_categoria,
-                    @estado,
-                    @prioridad
-                )
-            `);
-
-        return res.status(201).json({
-            mensaje: "Ticket creado correctamente",
-            ticket: resultado.recordset[0]
-        });
+      return res.status(201).json({
+        mensaje: "Ticket creado correctamente",
+        ticket: resultado.recordset[0],
+      });
     } catch (error) {
-        console.error("Error al crear ticket:", error.message);
-        console.error("Código SQL:", error.number);
-        console.error(
-            "Detalles SQL:",
-            error.originalError?.message
-        );
+      console.error("Error al crear ticket:", error.message);
 
-        if (error.number === 547) {
-            return res.status(400).json({
-                mensaje:
-                    "Algún ID relacionado o valor enviado incumple una restricción de la base de datos"
-            });
-        }
-
-        return res.status(500).json({
-            mensaje: "Error interno al crear el ticket"
-        });
+      return res.status(500).json({
+        mensaje: "Error al crear el ticket",
+      });
     }
-});
+  }
+);
 
-// PUT /api/tickets/:id
-// Actualizar un ticket existente
-router.put("/:id", async (req, res) => {
-    const id = Number(req.params.id);
+// ACTUALIZAR TICKET
+// Acceso: administrador y técnico
+router.put(
+  "/:id",
+  permitirRoles("administrador", "tecnico"),
+  async (req, res) => {
+    const id = validarId(req.params.id);
 
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({
-            mensaje: "El ID debe ser un entero positivo"
-        });
+    if (!id) {
+      return res.status(400).json({
+        mensaje: "ID de ticket inválido",
+      });
     }
 
     const datos = req.body;
+    const errorValidacion = validarTicket(datos, true);
 
-    if (
-        !datos ||
-        typeof datos !== "object" ||
-        Array.isArray(datos)
-    ) {
-        return res.status(400).json({
-            mensaje: "Debes enviar un objeto JSON"
-        });
-    }
-
-    const camposPermitidos = [
-        "titulo",
-        "descripcion",
-        "estado",
-        "prioridad",
-        "id_cliente",
-        "id_tecnico",
-        "id_categoria"
-    ];
-
-    const camposRecibidos = Object.keys(datos);
-
-    if (camposRecibidos.length === 0) {
-        return res.status(400).json({
-            mensaje: "Debes enviar al menos un campo para actualizar"
-        });
-    }
-
-    const camposInvalidos = camposRecibidos.filter(
-        campo => !camposPermitidos.includes(campo)
-    );
-
-    if (camposInvalidos.length > 0) {
-        return res.status(400).json({
-            mensaje: "Hay campos que no se pueden actualizar",
-            camposInvalidos
-        });
-    }
-
-    const { titulo, descripcion, estado, prioridad } = datos;
-
-    if (
-        titulo !== undefined &&
-        (
-            typeof titulo !== "string" ||
-            !titulo.trim() ||
-            titulo.trim().length > 150
-        )
-    ) {
-        return res.status(400).json({
-            mensaje: "El título debe tener entre 1 y 150 caracteres"
-        });
-    }
-
-    if (
-        descripcion !== undefined &&
-        (
-            typeof descripcion !== "string" ||
-            !descripcion.trim()
-        )
-    ) {
-        return res.status(400).json({
-            mensaje: "La descripción no puede estar vacía"
-        });
-    }
-
-    if (
-        estado !== undefined &&
-        (
-            typeof estado !== "string" ||
-            !ESTADOS_PERMITIDOS.includes(
-                estado.trim().toLowerCase()
-            )
-        )
-    ) {
-        return res.status(400).json({
-            mensaje: "Estado inválido",
-            estadosPermitidos: ESTADOS_PERMITIDOS
-        });
-    }
-
-    if (
-        prioridad !== undefined &&
-        (
-            typeof prioridad !== "string" ||
-            !PRIORIDADES_PERMITIDAS.includes(
-                prioridad.trim().toLowerCase()
-            )
-        )
-    ) {
-        return res.status(400).json({
-            mensaje: "Prioridad inválida",
-            prioridadesPermitidas: PRIORIDADES_PERMITIDAS
-        });
-    }
-
-    const datosNormalizados = { ...datos };
-
-    for (const campo of ["id_cliente", "id_categoria"]) {
-        if (datosNormalizados[campo] !== undefined) {
-            const valor = Number(datosNormalizados[campo]);
-
-            if (!Number.isInteger(valor) || valor <= 0) {
-                return res.status(400).json({
-                    mensaje: `${campo} debe ser un entero positivo`
-                });
-            }
-
-            datosNormalizados[campo] = valor;
-        }
-    }
-
-    if (datosNormalizados.id_tecnico !== undefined) {
-        if (
-            datosNormalizados.id_tecnico !== null &&
-            datosNormalizados.id_tecnico !== ""
-        ) {
-            const tecnicoId = Number(datosNormalizados.id_tecnico);
-
-            if (!Number.isInteger(tecnicoId) || tecnicoId <= 0) {
-                return res.status(400).json({
-                    mensaje: "id_tecnico debe ser un entero positivo o null"
-                });
-            }
-
-            datosNormalizados.id_tecnico = tecnicoId;
-        } else {
-            datosNormalizados.id_tecnico = null;
-        }
+    if (errorValidacion) {
+      return res.status(400).json({
+        mensaje: errorValidacion,
+      });
     }
 
     try {
-        const pool = await conectarDB();
-        const request = pool.request();
+      const pool = await conectarDB();
 
-        const asignaciones = [];
+      const request = agregarParametros(pool.request(), datos);
 
-        const tipos = {
-            titulo: sql.NVarChar(150),
-            descripcion: sql.NVarChar(sql.MAX),
-            estado: sql.NVarChar(20),
-            prioridad: sql.NVarChar(10),
-            id_cliente: sql.Int,
-            id_tecnico: sql.Int,
-            id_categoria: sql.Int
-        };
+      request.input("id", sql.Int, id);
 
-        for (const campo of camposRecibidos) {
-            let valor = datosNormalizados[campo];
+      const asignaciones = Object.keys(datos)
+        .map((campo) => `${campo} = @${campo}`)
+        .join(", ");
 
-            if (typeof valor === "string") {
-                valor = valor.trim();
+      const resultado = await request.query(`
+        UPDATE tickets
+        SET ${asignaciones}
+        OUTPUT INSERTED.*
+        WHERE id_ticket = @id
+      `);
 
-                if (campo === "estado" || campo === "prioridad") {
-                    valor = valor.toLowerCase();
-                }
-            }
+      if (resultado.recordset.length === 0) {
+        return res.status(404).json({
+          mensaje: "Ticket no encontrado",
+        });
+      }
 
-            request.input(campo, tipos[campo], valor);
-            asignaciones.push(`${campo} = @${campo}`);
-        }
+      return res.status(200).json({
+        mensaje: "Ticket actualizado correctamente",
+        ticket: resultado.recordset[0],
+      });
+    } catch (error) {
+      console.error("Error al actualizar ticket:", error.message);
 
-        request.input("id_ticket", sql.Int, id);
+      return res.status(500).json({
+        mensaje: "Error al actualizar el ticket",
+      });
+    }
+  }
+);
 
-        const resultado = await request.query(`
-            UPDATE tickets
-            SET ${asignaciones.join(", ")},
-                fecha_actualizacion = GETDATE()
-            OUTPUT INSERTED.*
-            WHERE id_ticket = @id_ticket
+// ELIMINAR TICKET
+// Acceso: solo administrador
+router.delete(
+  "/:id",
+  permitirRoles("administrador"),
+  async (req, res) => {
+    const id = validarId(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        mensaje: "ID de ticket inválido",
+      });
+    }
+
+    try {
+      const pool = await conectarDB();
+
+      const resultado = await pool
+        .request()
+        .input("id", sql.Int, id)
+        .query(`
+          DELETE FROM tickets
+          OUTPUT DELETED.id_ticket
+          WHERE id_ticket = @id
         `);
 
-        const ticketActualizado = resultado.recordset?.[0];
-
-        if (!ticketActualizado) {
-            return res.status(404).json({
-                mensaje: "No se encontró el ticket con ese ID"
-            });
-        }
-
-        return res.status(200).json({
-            mensaje: "Ticket actualizado correctamente",
-            ticket: ticketActualizado
+      if (resultado.recordset.length === 0) {
+        return res.status(404).json({
+          mensaje: "Ticket no encontrado",
         });
+      }
+
+      return res.status(200).json({
+        mensaje: "Ticket eliminado correctamente",
+        id_ticket: id,
+      });
     } catch (error) {
-        console.error("Error al actualizar ticket:", error.message);
-        console.error("Código SQL:", error.number);
-        console.error(
-            "Detalles SQL:",
-            error.originalError?.message
-        );
+      console.error("Error al eliminar ticket:", error.message);
 
-        if (error.number === 547) {
-            return res.status(400).json({
-                mensaje:
-                    "El estado, la prioridad o uno de los IDs incumple una restricción de la base de datos"
-            });
-        }
-
-        return res.status(500).json({
-            mensaje: "Error interno al actualizar el ticket"
-        });
+      return res.status(500).json({
+        mensaje: "Error al eliminar el ticket",
+      });
     }
-});
-
-
- // DELETE /api/tickets/:id
- // Eliminar un ticket existente
-router.delete("/:id", async (req, res) => {
-    const id = Number(req.params.id);
-
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({
-            mensaje: "El ID debe ser un entero positivo"
-        });
-    }
-
-    try {
-        const pool = await conectarDB();
-
-        const resultado = await pool.request()
-            .input("id_ticket", sql.Int, id)
-            .query(`
-                DELETE FROM tickets
-                OUTPUT DELETED.id_ticket
-                WHERE id_ticket = @id_ticket
-            `);
-
-        if (resultado.recordset.length === 0) {
-            return res.status(404).json({
-                mensaje: "No se encontró un ticket con ese ID"
-            });
-        }
-
-        return res.status(200).json({
-            mensaje: "Ticket eliminado correctamente",
-            id_ticket: resultado.recordset[0].id_ticket
-        });
-    } catch (error) {
-        console.error("Error al eliminar ticket:", error.message);
-        console.error("Código SQL:", error.number);
-
-        if (error.number === 547) {
-            return res.status(409).json({
-                mensaje:
-                    "No se puede eliminar el ticket porque tiene registros relacionados"
-            });
-        }
-
-        return res.status(500).json({
-            mensaje: "Error interno al eliminar el ticket"
-        });
-    }
-});
-
+  }
+);
 
 module.exports = router;

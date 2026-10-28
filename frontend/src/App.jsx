@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BrowserRouter,
   NavLink,
+  Navigate,
   Route,
   Routes,
   useNavigate,
@@ -20,18 +21,13 @@ import {
   AlertCircle,
   X,
   LifeBuoy,
+  LogOut,
+  LockKeyhole,
 } from "lucide-react";
 import { api } from "./api";
 import "./App.css";
 
-const ESTADOS = [
-  "abierto",
-  "pendiente",
-  "en_proceso",
-  "resuelto",
-  "cerrado",
-];
-
+const ESTADOS = ["abierto", "pendiente", "en_proceso", "resuelto", "cerrado"];
 const PRIORIDADES = ["baja", "media", "alta", "critica"];
 
 const bonito = (s) =>
@@ -50,6 +46,28 @@ const vacio = {
   estado: "abierto",
   prioridad: "media",
 };
+
+const CLAVE_SESION = "soporte_ti_sesion";
+
+function leerSesion() {
+  try {
+    const sesion = JSON.parse(sessionStorage.getItem(CLAVE_SESION) || "null");
+
+    if (!sesion?.token || !sesion?.usuario) return null;
+
+    const payload = JSON.parse(atob(sesion.token.split(".")[1]));
+
+    if (!payload.exp || payload.exp * 1000 <= Date.now()) {
+      sessionStorage.removeItem(CLAVE_SESION);
+      return null;
+    }
+
+    return sesion;
+  } catch {
+    sessionStorage.removeItem(CLAVE_SESION);
+    return null;
+  }
+}
 
 function Mensaje({ error, ok }) {
   return (
@@ -71,7 +89,136 @@ function Mensaje({ error, ok }) {
   );
 }
 
-function Layout() {
+async function iniciarSesion(correo, contra) {
+  let respuesta;
+
+  try {
+    respuesta = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ correo, contra }),
+    });
+  } catch {
+    throw new Error(
+      "No se pudo conectar al backend. Verifica que Express esté activo en el puerto 3000."
+    );
+  }
+
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    throw new Error(datos.mensaje || "No se pudo iniciar sesión");
+  }
+
+  if (!datos.token || !datos.usuario) {
+    throw new Error("Respuesta de autenticación incompleta");
+  }
+
+  return {
+    token: datos.token,
+    usuario: datos.usuario,
+  };
+}
+
+function Login({ onLogin }) {
+  const [correo, setCorreo] = useState("");
+  const [contra, setContra] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function entrar(e) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+
+    try {
+      const sesion = await iniciarSesion(correo.trim(), contra);
+      onLogin(sesion);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "grid",
+        placeItems: "center",
+        padding: 24,
+        background: "#f4f7fb",
+      }}
+    >
+      <div
+        className="panel"
+        style={{
+          width: "100%",
+          maxWidth: 440,
+          padding: 32,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          <LifeBuoy size={32} />
+          <h1 style={{ margin: 0, fontSize: 28 }}>Soporte TI</h1>
+        </div>
+
+        <p style={{ marginBottom: 24 }}>
+          Inicia sesión para acceder al sistema de tickets.
+        </p>
+
+        <Mensaje error={error} />
+
+        <form onSubmit={entrar} className="user-form">
+          <label>
+            Correo electrónico
+            <input
+              type="email"
+              autoComplete="username"
+              required
+              maxLength="150"
+              value={correo}
+              onChange={(e) => setCorreo(e.target.value)}
+              placeholder="usuario@ejemplo.com"
+            />
+          </label>
+
+          <label>
+            Contraseña
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={contra}
+              onChange={(e) => setContra(e.target.value)}
+              placeholder="Tu contraseña"
+            />
+          </label>
+
+          <button className="btn primary" disabled={busy} type="submit">
+            <LockKeyhole size={17} />
+            {busy ? "Ingresando..." : "Iniciar sesión"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Layout({ sesion, onLogout }) {
+  const { usuario } = sesion;
+  const esAdmin = usuario.rol === "administrador";
+
   return (
     <div className="shell">
       <aside className="side">
@@ -93,13 +240,17 @@ function Layout() {
             <Ticket size={19} /> Tickets
           </NavLink>
 
-          <NavLink to="/nuevo">
-            <Plus size={19} /> Nuevo ticket
-          </NavLink>
+          {esAdmin && (
+            <NavLink to="/nuevo">
+              <Plus size={19} /> Nuevo ticket
+            </NavLink>
+          )}
 
-          <NavLink to="/usuarios">
-            <Users size={19} /> Usuarios
-          </NavLink>
+          {esAdmin && (
+            <NavLink to="/usuarios">
+              <Users size={19} /> Usuarios
+            </NavLink>
+          )}
         </nav>
 
         <div className="side-footer">
@@ -112,16 +263,46 @@ function Layout() {
       <main className="main">
         <header className="topbar">
           <span>Centro de soporte</span>
-          <span className="status-dot">Sistema de tickets</span>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+            }}
+          >
+            <span>
+              {usuario.nombre} ({bonito(usuario.rol)})
+            </span>
+
+            <button className="btn subtle" type="button" onClick={onLogout}>
+              <LogOut size={16} /> Salir
+            </button>
+          </div>
         </header>
 
         <div className="content">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/tickets" element={<Tickets />} />
-            <Route path="/nuevo" element={<FormularioTicket />} />
-            <Route path="/usuarios" element={<Usuarios />} />
-            <Route path="*" element={<div>Página no encontrada</div>} />
+            <Route path="/" element={<Dashboard esAdmin={esAdmin} />} />
+
+            <Route
+              path="/tickets"
+              element={<Tickets esAdmin={esAdmin} />}
+            />
+
+            <Route
+              path="/nuevo"
+              element={
+                esAdmin ? <FormularioTicket /> : <Navigate to="/tickets" replace />
+              }
+            />
+
+            <Route
+              path="/usuarios"
+              element={esAdmin ? <Usuarios /> : <Navigate to="/" replace />}
+            />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
       </main>
@@ -154,7 +335,7 @@ function useTickets() {
   return { tickets, loading, error, refresh };
 }
 
-function Dashboard() {
+function Dashboard({ esAdmin }) {
   const { tickets, loading, error, refresh } = useTickets();
 
   const cards = [
@@ -185,9 +366,11 @@ function Dashboard() {
           <p>Seguimiento de incidencias y solicitudes de la organización.</p>
         </div>
 
-        <NavLink className="btn primary" to="/nuevo">
-          <Plus size={17} /> Nuevo ticket
-        </NavLink>
+        {esAdmin && (
+          <NavLink className="btn primary" to="/nuevo">
+            <Plus size={17} /> Nuevo ticket
+          </NavLink>
+        )}
       </div>
 
       <Mensaje error={error} />
@@ -267,10 +450,7 @@ function Tabla({
                       </button>
 
                       {t.estado !== "cerrado" && (
-                        <button
-                          title="Cerrar ticket"
-                          onClick={() => onClose(t)}
-                        >
+                        <button title="Cerrar ticket" onClick={() => onClose(t)}>
                           <CheckCircle size={17} />
                         </button>
                       )}
@@ -309,7 +489,7 @@ function Tabla({
   );
 }
 
-function Tickets() {
+function Tickets({ esAdmin }) {
   const { tickets, loading, error, refresh } = useTickets();
 
   const [q, setQ] = useState("");
@@ -377,12 +557,14 @@ function Tickets() {
         <div>
           <p className="eyebrow">ADMINISTRACIÓN</p>
           <h1>Gestión de tickets</h1>
-          <p>Consulta, actualiza y administra solicitudes de soporte.</p>
+          <p>Consulta y seguimiento de solicitudes de soporte.</p>
         </div>
 
-        <NavLink className="btn primary" to="/nuevo">
-          <Plus size={17} /> Crear ticket
-        </NavLink>
+        {esAdmin && (
+          <NavLink className="btn primary" to="/nuevo">
+            <Plus size={17} /> Crear ticket
+          </NavLink>
+        )}
       </div>
 
       <Mensaje error={error || accionError} ok={ok} />
@@ -436,13 +618,14 @@ function Tickets() {
         <Tabla
           tickets={filtrados}
           loading={loading}
+          simple={!esAdmin}
           onEdit={setEditando}
           onDelete={eliminar}
           onClose={cerrar}
         />
       </div>
 
-      {editando && (
+      {esAdmin && editando && (
         <ModalTicket
           ticket={editando}
           onClose={() => setEditando(null)}
@@ -459,8 +642,8 @@ function Tickets() {
 
 function CamposTicket({ form, setForm, usuarios, categorias }) {
   const cambiar = (e) =>
-    setForm((prev) => ({
-      ...prev,
+    setForm((p) => ({
+      ...p,
       [e.target.name]: e.target.value,
     }));
 
@@ -590,43 +773,50 @@ function normalizar(form) {
   };
 }
 
-function FormularioTicket() {
-  const [form, setForm] = useState({ ...vacio });
+function useCatalogos() {
   const [usuarios, setUsuarios] = useState([]);
   const [categorias, setCategorias] = useState([]);
+  const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
-  const [guardando, setGuardando] = useState(false);
-  const [cargandoCatalogos, setCargandoCatalogos] = useState(true);
-
-  const navigate = useNavigate();
 
   useEffect(() => {
     let activo = true;
 
-    async function cargar() {
-      try {
-        const [listaUsuarios, listaCategorias] = await Promise.all([
-          api.usuarios(),
-          api.categorias(),
-        ]);
-
+    Promise.all([api.usuarios(), api.categorias()])
+      .then(([u, c]) => {
         if (activo) {
-          setUsuarios(listaUsuarios);
-          setCategorias(listaCategorias);
+          setUsuarios(u);
+          setCategorias(c);
         }
-      } catch (e) {
+      })
+      .catch((e) => {
         if (activo) setError(e.message);
-      } finally {
-        if (activo) setCargandoCatalogos(false);
-      }
-    }
-
-    cargar();
+      })
+      .finally(() => {
+        if (activo) setCargando(false);
+      });
 
     return () => {
       activo = false;
     };
   }, []);
+
+  return { usuarios, categorias, cargando, error };
+}
+
+function FormularioTicket() {
+  const [form, setForm] = useState({ ...vacio });
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const {
+    usuarios,
+    categorias,
+    cargando,
+    error: errorCatalogos,
+  } = useCatalogos();
+
+  const navigate = useNavigate();
 
   async function guardar(e) {
     e.preventDefault();
@@ -654,9 +844,9 @@ function FormularioTicket() {
       </div>
 
       <div className="panel form-panel">
-        <Mensaje error={error} />
+        <Mensaje error={error || errorCatalogos} />
 
-        {cargandoCatalogos ? (
+        {cargando ? (
           <p>Cargando usuarios y categorías...</p>
         ) : (
           <form onSubmit={guardar}>
@@ -699,39 +889,15 @@ function ModalTicket({ ticket, onClose, onSaved }) {
       ticket.id_tecnico == null ? "" : String(ticket.id_tecnico),
   });
 
-  const [usuarios, setUsuarios] = useState([]);
-  const [categorias, setCategorias] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [cargando, setCargando] = useState(true);
 
-  useEffect(() => {
-    let activo = true;
-
-    async function cargar() {
-      try {
-        const [listaUsuarios, listaCategorias] = await Promise.all([
-          api.usuarios(),
-          api.categorias(),
-        ]);
-
-        if (activo) {
-          setUsuarios(listaUsuarios);
-          setCategorias(listaCategorias);
-        }
-      } catch (e) {
-        if (activo) setError(e.message);
-      } finally {
-        if (activo) setCargando(false);
-      }
-    }
-
-    cargar();
-
-    return () => {
-      activo = false;
-    };
-  }, []);
+  const {
+    usuarios,
+    categorias,
+    cargando,
+    error: errorCatalogos,
+  } = useCatalogos();
 
   async function guardar(e) {
     e.preventDefault();
@@ -770,7 +936,7 @@ function ModalTicket({ ticket, onClose, onSaved }) {
           </button>
         </div>
 
-        <Mensaje error={error} />
+        <Mensaje error={error || errorCatalogos} />
 
         {cargando ? (
           <p>Cargando usuarios y categorías...</p>
@@ -791,7 +957,11 @@ function ModalTicket({ ticket, onClose, onSaved }) {
                 {busy ? "Guardando..." : "Guardar cambios"}
               </button>
 
-              <button type="button" className="btn subtle" onClick={onClose}>
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={onClose}
+              >
                 Cancelar
               </button>
             </div>
@@ -979,9 +1149,25 @@ function Usuarios() {
 }
 
 export default function App() {
+  const [sesion, setSesion] = useState(leerSesion);
+
+  function onLogin(nuevaSesion) {
+    sessionStorage.setItem(CLAVE_SESION, JSON.stringify(nuevaSesion));
+    setSesion(nuevaSesion);
+  }
+
+  function onLogout() {
+    sessionStorage.removeItem(CLAVE_SESION);
+    setSesion(null);
+  }
+
   return (
     <BrowserRouter>
-      <Layout />
+      {sesion ? (
+        <Layout sesion={sesion} onLogout={onLogout} />
+      ) : (
+        <Login onLogin={onLogin} />
+      )}
     </BrowserRouter>
   );
 }
