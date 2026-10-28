@@ -2,12 +2,16 @@
 const express = require("express");
 const { conectarDB } = require("./config/db");
 const ticketsRoutes = require("./routes/tickets.routes");
+const usuariosRoutes = require("./routes/usuarios.routes");
+const categoriasRoutes = require("./routes/categorias.routes");
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
 app.use("/api/tickets", ticketsRoutes);
+app.use("/api/usuarios", usuariosRoutes);
+app.use("/api/categorias", categoriasRoutes);
 
 // Ruta de bienvenida
 app.get("/", (req, res) => {

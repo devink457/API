@@ -4,7 +4,7 @@ const sql = require("mssql/msnodesqlv8");
 const config = {
     connectionString:
         "Driver={ODBC Driver 17 for SQL Server};" +
-        "Server=localhost\\SQLEXPRESS;" +
+        "Server=localhost;" +
         "Database=soporte_tickets;" +
         "Trusted_Connection=Yes;" +
         "TrustServerCertificate=Yes;"
